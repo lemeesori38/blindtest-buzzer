@@ -201,6 +201,11 @@ function handleAction(a) {
       }
       break;
     }
+    case 'seek': { // avancer / reculer dans la vidéo (sur l'écran)
+      const d = Math.max(-600, Math.min(600, Number(a.delta) || 0));
+      sendEvent('seek', { delta: d });
+      return { ok: true };
+    }
     case 'video': {
       const v = parseYouTube(a.url);
       if (!v) return { error: 'Lien YouTube non reconnu' };
