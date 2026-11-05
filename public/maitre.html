@@ -22,9 +22,6 @@
     <b>Vidéo YouTube</b>
     <input id="url" placeholder="Colle le lien YouTube du blind test" style="margin-top:8px">
     <button id="send" class="b-blue full" style="margin-top:8px">📺 Envoyer sur l'écran</button>
-    <div class="grid2" style="margin-top:8px">
-      <button id="play">▶️ Lecture</button><button id="pause">⏸ Pause</button>
-    </div>
   </div>
 
   <div class="card" id="live">
@@ -34,7 +31,8 @@
       <button id="wrong" class="b-ko">✘ Mauvaise</button>
     </div>
     <button id="next" class="b-acc full" style="margin-top:10px;font-size:1.2rem">🎶 Nouvel extrait — ouvrir les buzzers</button>
-    <button id="lock" class="full" style="margin-top:8px">🔒 Bloquer les buzzers</button>
+    <button id="showAns" class="b-blue full" style="margin-top:8px">👀 Découvrir la réponse</button>
+    <button id="freeze" class="full" style="margin-top:8px">⏸ Bloquer les buzzers — pause</button>
   </div>
 
   <div class="card">
@@ -56,12 +54,11 @@ try { new QRCode($('qr'), { text: joinUrl, width: 200, height: 200 }); } catch (
 
 const act = async (d) => { const r = await BT.act(d); if (r.error) alert(r.error); };
 $('send').onclick = () => act({ type: 'video', url: $('url').value });
-$('play').onclick = () => act({ type: 'play' });
-$('pause').onclick = () => act({ type: 'pause' });
 $('valid').onclick = () => act({ type: 'valid' });
 $('wrong').onclick = () => act({ type: 'wrong' });
 $('next').onclick = () => act({ type: 'next' });
-$('lock').onclick = () => act({ type: 'lock' });
+$('showAns').onclick = () => act({ type: 'reveal' });
+$('freeze').onclick = () => act({ type: 'freeze' });
 $('end').onclick = () => confirm('Terminer la partie et afficher le classement ?') && act({ type: 'end' });
 $('reset').onclick = () => confirm('Remettre les points à zéro et rejouer ?') && act({ type: 'reset' });
 $('wipe').onclick = () => confirm('Effacer joueurs et points ?') && act({ type: 'wipe' });
@@ -73,7 +70,10 @@ document.addEventListener('click', () => BT.keepAwake(), { once: true });
 const LABEL = { lobby: '⏸ En attente des joueurs', waiting: '🔒 Buzzers fermés', open: '🟢 Buzzers ouverts', answering: '🎤 Réponse en cours', ended: '🏁 Partie terminée' };
 function render() {
   const s = BT.state; if (!s) return;
-  $('phase').textContent = LABEL[s.phase] || s.phase;
+  $('phase').textContent = s.frozen ? '⏸ Pause — buzzers bloqués' : (LABEL[s.phase] || s.phase);
+  const fb = $('freeze');
+  fb.textContent = s.frozen ? '▶️ Débloquer les buzzers — lecture' : '⏸ Bloquer les buzzers — pause';
+  fb.className = 'full' + (s.frozen ? ' b-gold' : '');
   $('lobby').style.display = s.phase === 'lobby' ? 'block' : 'none';
   $('nb').textContent = s.players.length;
   $('players').innerHTML = s.players.map(p =>
@@ -84,7 +84,7 @@ function render() {
   });
   const box = $('buzzBox');
   if (s.phase === 'answering' && s.buzz) {
-    const left = Math.max(0, Math.ceil((s.buzz.until - BT.now()) / 1000));
+    const left = Math.max(0, Math.ceil((s.buzz.until - BT.gameNow(s)) / 1000));
     box.innerHTML = `<div class="answer"><div class="who">${BT.esc(s.buzz.name)}</div><div class="count">${left}</div></div>`;
   } else if (s.pending) {
     box.innerHTML = `<div class="answer" style="opacity:.8"><div>Temps écoulé pour</div><div class="who">${BT.esc(s.pending.name)}</div><div>Bonne réponse ?</div></div>`;
