@@ -63,11 +63,15 @@ function render() {
   if (!joined) return;
   $('me').textContent = myName;
   const me = s.players.find(p => p.id === pid);
-  const cd = me ? me.cooldownUntil - BT.now() : 0;
+  const gnow = BT.gameNow(s);
+  const cd = me ? me.cooldownUntil - gnow : 0;
   const b = $('buzz'), msg = $('msg'), info = $('info');
   info.innerHTML = '';
-  if (s.phase === 'answering' && s.buzz) {
-    const left = Math.max(0, Math.ceil((s.buzz.until - BT.now()) / 1000));
+  if (s.frozen) {
+    b.disabled = true; b.textContent = '⏸';
+    msg.textContent = cd > 0 ? `⏸ Pause (temps mort : ${Math.ceil(cd / 1000)}s)` : '⏸ Pause — buzzers bloqués';
+  } else if (s.phase === 'answering' && s.buzz) {
+    const left = Math.max(0, Math.ceil((s.buzz.until - gnow) / 1000));
     b.disabled = true; b.textContent = left;
     if (s.buzz.id === pid) { msg.innerHTML = '<span style="color:var(--acc2)">🎤 À toi de répondre !</span>'; }
     else msg.textContent = `${s.buzz.name} répond…`;
