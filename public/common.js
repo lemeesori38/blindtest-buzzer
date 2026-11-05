@@ -3,6 +3,8 @@ const BT = {
   offset: 0,
   state: null,
   now() { return Date.now() + this.offset; },
+  // Horloge du jeu : figée pendant la pause (pénalités et décompte gelés)
+  gameNow(s) { s = s || this.state; return s && s.frozen && s.pausedAt ? s.pausedAt : this.now(); },
   connect(role, pid, onState, onEvent = {}) {
     const qs = new URLSearchParams({ role, pid: pid || '' });
     const es = new EventSource('/events?' + qs);
