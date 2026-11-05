@@ -208,6 +208,7 @@ const ROUTES = { '/': 'index.html', '/ecran': 'ecran.html', '/maitre': 'maitre.h
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+  console.log(new Date().toISOString(), req.method, req.url);
 
   if (url.pathname === '/events') {
     res.writeHead(200, {
