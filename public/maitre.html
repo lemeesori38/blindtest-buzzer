@@ -31,7 +31,9 @@
       <button id="wrong" class="b-ko">✘ Mauvaise</button>
     </div>
     <button id="next" class="b-acc full" style="margin-top:10px;font-size:1.2rem">🎶 Nouvel extrait — ouvrir les buzzers</button>
-    <button id="showAns" class="b-blue full" style="margin-top:8px">👀 Découvrir la réponse</button>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px">
+      <button data-seek="-60">⏪ -60s</button><button data-seek="-15">◀ -15s</button><button data-seek="15">+15s ▶</button><button data-seek="60">+60s ⏩</button>
+    </div>
     <button id="freeze" class="full" style="margin-top:8px">⏸ Bloquer les buzzers — pause</button>
   </div>
 
@@ -57,7 +59,7 @@ $('send').onclick = () => act({ type: 'video', url: $('url').value });
 $('valid').onclick = () => act({ type: 'valid' });
 $('wrong').onclick = () => act({ type: 'wrong' });
 $('next').onclick = () => act({ type: 'next' });
-$('showAns').onclick = () => act({ type: 'reveal' });
+document.querySelectorAll('[data-seek]').forEach(b => b.onclick = () => act({ type: 'seek', delta: +b.dataset.seek }));
 $('freeze').onclick = () => act({ type: 'freeze' });
 $('end').onclick = () => confirm('Terminer la partie et afficher le classement ?') && act({ type: 'end' });
 $('reset').onclick = () => confirm('Remettre les points à zéro et rejouer ?') && act({ type: 'reset' });
