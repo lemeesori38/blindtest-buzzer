@@ -22,6 +22,8 @@ function newGame() {
     playing: false,
     revealStart: null,
     ranking: null,
+    frozen: false,           // buzzers bloqués + pause (pénalités et décompte gelés)
+    pausedAt: null,
   };
 }
 newGame();
@@ -48,6 +50,8 @@ function publicState(client) {
     playing: game.playing,
     revealStart: game.revealStart,
     revealStep: REVEAL_STEP_MS,
+    frozen: game.frozen,
+    pausedAt: game.pausedAt,
     // Les points restent cachés jusqu'à la fin de la partie
     ranking: game.phase === 'ended' ? game.ranking : null,
     you: client.pid && game.players[client.pid] ? { id: client.pid, name: game.players[client.pid].name } : null,
@@ -72,6 +76,34 @@ setInterval(() => {
 
 // ---------- Logique ----------
 function clearAnswerTimer() { if (answerTimer) { clearTimeout(answerTimer); answerTimer = null; } }
+
+function startAnswerTimer(ms) {
+  clearAnswerTimer();
+  answerTimer = setTimeout(() => {
+    answerTimer = null;
+    if (game.phase === 'answering' && !game.frozen) {
+      // Fin des 13 s : la vidéo reprend et les autres peuvent buzzer
+      game.phase = 'open';
+      game.buzz = null;
+      game.playing = true;
+      broadcast();
+    }
+  }, Math.max(0, ms));
+}
+
+function unfreeze(now) {
+  if (!game.frozen) return;
+  const delta = now - game.pausedAt;
+  // Les pénalités reprennent où elles en étaient
+  for (const p of Object.values(game.players))
+    if (p.cooldownUntil > game.pausedAt) p.cooldownUntil += delta;
+  if (game.phase === 'answering' && game.buzz) {
+    game.buzz.until += delta;
+    startAnswerTimer(game.buzz.until - now);
+  }
+  game.frozen = false;
+  game.pausedAt = null;
+}
 
 function parseYouTube(url) {
   if (!url) return null;
@@ -99,6 +131,7 @@ function handleAction(a) {
     case 'buzz': {
       const p = game.players[a.pid];
       if (!p) return { error: 'Joueur inconnu' };
+      if (game.frozen) return { error: 'Buzzers bloqués' };
       if (game.phase !== 'open') return { error: 'Buzzers fermés' };
       if (now < p.cooldownUntil) return { error: 'Temps mort' };
       // Premier arrivé = premier servi : on bascule tout de suite en phase réponse
@@ -107,34 +140,27 @@ function handleAction(a) {
       game.buzz = { id: p.id, name: p.name, at: now, until: now + ANSWER_MS };
       game.pending = { id: p.id, name: p.name };
       p.cooldownUntil = now + COOLDOWN_MS;
-      clearAnswerTimer();
-      answerTimer = setTimeout(() => {
-        answerTimer = null;
-        if (game.phase === 'answering') {
-          // Fin des 13 s : la vidéo reprend et les autres peuvent buzzer
-          game.phase = 'open';
-          game.buzz = null;
-          game.playing = true;
-          broadcast();
-        }
-      }, ANSWER_MS);
+      startAnswerTimer(ANSWER_MS);
       sendEvent('buzz', { name: p.name });
       break;
     }
     case 'valid': {
+      // Bonne réponse : +1, pas de pénalité, la vidéo reprend mais les buzzers restent fermés
       if (!game.pending) return { error: 'Aucune réponse à valider' };
       const p = game.players[game.pending.id];
-      if (p) p.score += 1;
+      if (p) { p.score += 1; p.cooldownUntil = 0; }
       clearAnswerTimer();
+      game.frozen = false; game.pausedAt = null;
       game.pending = null;
       game.buzz = null;
-      game.phase = 'waiting';   // le maître relance au prochain extrait
-      game.playing = false;
+      game.phase = 'waiting';
+      game.playing = true;
       sendEvent('verdict', { ok: true });
       break;
     }
     case 'wrong': {
       if (!game.pending) return { error: 'Aucune réponse à refuser' };
+      unfreeze(now);
       clearAnswerTimer();
       game.pending = null;
       game.buzz = null;
@@ -143,23 +169,38 @@ function handleAction(a) {
       sendEvent('verdict', { ok: false });
       break;
     }
-    case 'next': { // nouvel extrait : on ouvre les buzzers
+    case 'next': { // nouvel extrait : buzzers ouverts, toutes les pénalités effacées
       clearAnswerTimer();
+      game.frozen = false; game.pausedAt = null;
+      for (const p of Object.values(game.players)) p.cooldownUntil = 0;
       game.buzz = null;
       game.pending = null;
       game.phase = 'open';
       game.playing = true;
       break;
     }
-    case 'lock': {
+    case 'reveal': { // découvrir la réponse : la vidéo reprend, buzzers fermés
       clearAnswerTimer();
+      game.frozen = false; game.pausedAt = null;
       game.buzz = null;
+      game.pending = null;
       game.phase = 'waiting';
-      game.playing = false;
+      game.playing = true;
       break;
     }
-    case 'play': game.playing = true; break;
-    case 'pause': game.playing = false; break;
+    case 'freeze': { // bloquer-pause / débloquer-lecture (bouton bascule)
+      if (game.phase === 'ended') break;
+      if (!game.frozen) {
+        game.frozen = true;
+        game.pausedAt = now;
+        game.playing = false;
+        clearAnswerTimer();
+      } else {
+        unfreeze(now);
+        game.playing = game.phase !== 'answering' && game.phase !== 'lobby';
+      }
+      break;
+    }
     case 'video': {
       const v = parseYouTube(a.url);
       if (!v) return { error: 'Lien YouTube non reconnu' };
@@ -174,6 +215,7 @@ function handleAction(a) {
       game.pending = null;
       game.playing = false;
       game.phase = 'ended';
+      game.frozen = false; game.pausedAt = null;
       // Classement du dernier au premier (rang avec gestion des ex-aequo)
       const sorted = Object.values(game.players).sort((x, y) => y.score - x.score);
       let rank = 0, prev = null;
