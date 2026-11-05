@@ -70,6 +70,7 @@ function sync() {
 const LABEL = { lobby: '⏸ En attente des joueurs', waiting: '🔒 Attente du prochain extrait', open: '🟢 Buzzers ouverts !', answering: '🎤 Réponse en cours', ended: '🏁 Partie terminée' };
 BT.connect('screen', '', s => { sync(); render(); }, {
   buzz: () => { BT.beep(990, .35); },
+  seek: d => { if (ytReady && yt.getCurrentTime) yt.seekTo(Math.max(0, yt.getCurrentTime() + d.delta), true); },
   verdict: d => {
     if (d.ok) { BT.beep(1320, .15); setTimeout(() => BT.beep(1760, .25), 150); }
     else BT.beep(180, .5);
