@@ -1,0 +1,89 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Buzzer</title><link rel="stylesheet" href="/style.css"></head>
+<body><span id="net" class="net"></span>
+<div class="wrap">
+  <div id="join" class="card">
+    <h1>🎵 Rejoindre la partie</h1>
+    <p class="muted">Entre ton pseudo</p>
+    <input id="name" maxlength="20" placeholder="Ton pseudo" autocomplete="off">
+    <button id="go" class="b-acc full" style="margin-top:12px">C'est parti</button>
+  </div>
+  <div id="game" style="display:none">
+    <div class="big" id="me"></div>
+    <div class="big muted" id="msg" style="min-height:2.2em;margin-top:8px"></div>
+    <button id="buzz" class="buzzer" disabled>BUZZ</button>
+    <div id="info" style="text-align:center"></div>
+  </div>
+  <div id="end" style="display:none"></div>
+</div>
+<script src="/common.js"></script>
+<script>
+const pid = BT.pid();
+const $ = id => document.getElementById(id);
+let joined = false, myName = '';
+try { $('name').value = localStorage.getItem('bt_name') || ''; } catch (e) {}
+
+$('go').onclick = async () => {
+  const name = $('name').value.trim();
+  if (!name) return $('name').focus();
+  const r = await BT.act({ type: 'join', pid, name });
+  if (r.error) return alert(r.error);
+  try { localStorage.setItem('bt_name', name); } catch (e) {}
+  myName = name; joined = true;
+  BT.keepAwake(); BT.beep(660, .05);
+  render();
+};
+
+$('buzz').onclick = async () => {
+  if ($('buzz').disabled) return;
+  $('buzz').disabled = true;
+  if (navigator.vibrate) navigator.vibrate(80);
+  const r = await BT.act({ type: 'buzz', pid });
+  if (r.error) { $('msg').textContent = r.error === 'Buzzers fermés' ? 'Trop tard 😅' : r.error; }
+};
+
+BT.connect('player', pid, s => {
+  // Reconnexion automatique si le joueur existe déjà sur le serveur
+  if (!joined && s.you) { joined = true; myName = s.you.name; BT.keepAwake(); }
+  if (joined && !s.you && s.phase !== 'ended') { joined = false; } // retiré par le maître
+  render();
+}, {
+  buzz: d => { if (d.name === myName) { BT.beep(990, .3); if (navigator.vibrate) navigator.vibrate([200, 80, 200]); } }
+});
+
+function render() {
+  const s = BT.state; if (!s) return;
+  if (s.phase === 'ended') {
+    $('join').style.display = 'none'; $('game').style.display = 'none'; $('end').style.display = 'block';
+    return;
+  }
+  $('end').style.display = 'none';
+  $('join').style.display = joined ? 'none' : 'block';
+  $('game').style.display = joined ? 'block' : 'none';
+  if (!joined) return;
+  $('me').textContent = myName;
+  const me = s.players.find(p => p.id === pid);
+  const cd = me ? me.cooldownUntil - BT.now() : 0;
+  const b = $('buzz'), msg = $('msg'), info = $('info');
+  info.innerHTML = '';
+  if (s.phase === 'answering' && s.buzz) {
+    const left = Math.max(0, Math.ceil((s.buzz.until - BT.now()) / 1000));
+    b.disabled = true; b.textContent = left;
+    if (s.buzz.id === pid) { msg.innerHTML = '<span style="color:var(--acc2)">🎤 À toi de répondre !</span>'; }
+    else msg.textContent = `${s.buzz.name} répond…`;
+  } else if (s.phase === 'open') {
+    if (cd > 0) { b.disabled = true; b.textContent = Math.ceil(cd / 1000) + 's'; msg.textContent = '⏳ Temps mort'; }
+    else { b.disabled = false; b.textContent = 'BUZZ'; msg.textContent = '🎶 Buzzers ouverts !'; }
+  } else {
+    b.disabled = true; b.textContent = 'BUZZ';
+    msg.textContent = s.phase === 'lobby' ? 'En attente du début de partie…' : 'Attends le prochain extrait…';
+    if (s.phase === 'lobby') info.innerHTML = s.players.map(p => `<span class="pill ${p.connected ? '' : 'off'}">${BT.esc(p.name)}</span>`).join('');
+  }
+}
+setInterval(() => {
+  render();
+  const s = BT.state;
+  if (s && s.phase === 'ended') BT.renderReveal($('end'), s);
+}, 200);
+$('name').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+</script></body></html>
