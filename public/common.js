@@ -53,22 +53,52 @@ const BT = {
     } catch (e) {}
   },
   esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
-  // Classement révélé un par un, puis podium (synchronisé sur tous les écrans)
+  // Classement révélé un par un, puis podium (synchronisé sur tous les écrans).
+  // Le DOM n'est modifié qu'au changement d'étape, pour que les animations ne rejouent pas.
   renderReveal(el, s) {
     const list = s.ranking || [];
+    const n = list.length;
     const shown = Math.max(0, Math.floor((this.now() - s.revealStart) / s.revealStep) + 1);
-    if (!list.length) { el.innerHTML = '<p class="muted">Aucun joueur</p>'; return; }
-    if (shown <= list.length) {
-      const items = list.slice(0, shown).map((p, i) =>
-        `<li class="rank-in ${i === shown - 1 ? 'fresh' : ''}"><span class="rk">${p.rank}<sup>${p.rank === 1 ? 'er' : 'e'}</sup></span><span class="nm">${this.esc(p.name)}</span></li>`).join('');
-      el.innerHTML = `<h2>Classement</h2><ol class="reveal">${items}</ol>${shown < list.length ? '<p class="muted pulse">…</p>' : ''}`;
-    } else {
-      const top = list.slice().reverse();
-      const pod = [top[1], top[0], top[2]];
-      const cls = ['p2', 'p1', 'p3'];
-      const blocks = pod.map((p, i) => p ? `<div class="pod ${cls[i]}"><div class="pn">${this.esc(p.name)}</div><div class="ps">${p.score} pt${p.score > 1 ? 's' : ''}</div><div class="pb">${p.rank}</div></div>` : '<div class="pod empty"></div>').join('');
-      const rest = top.slice(3).map(p => `<li><span class="rk">${p.rank}<sup>e</sup></span><span class="nm">${this.esc(p.name)}</span><span class="sc">${p.score} pt${p.score > 1 ? 's' : ''}</span></li>`).join('');
-      el.innerHTML = `<h2>🏆 Podium</h2><div class="podium">${blocks}</div>${rest ? `<ol class="others">${rest}</ol>` : ''}`;
+    const pts = x => `${x} pt${x > 1 ? 's' : ''}`;
+    const stage = !n ? 'empty' : shown === 0 ? 'intro' : shown <= n ? 'list' : 'podium';
+    if (stage === 'empty') {
+      if (el.dataset.stage !== 'empty') { el.dataset.stage = 'empty'; el.innerHTML = '<p class="muted" style="text-align:center">Aucun joueur</p>'; }
+      return;
     }
+    if (stage === 'intro') {
+      if (el.dataset.stage !== 'intro') { el.dataset.stage = 'intro'; el.innerHTML = '<div class="rv"><h2 class="rv-title">🏁 Fin de la partie</h2><p class="rv-wait">Place au classement…</p></div>'; }
+      return;
+    }
+    if (stage === 'list') {
+      if (el.dataset.stage !== 'list') {
+        el.dataset.stage = 'list'; el.dataset.count = '0';
+        el.innerHTML = '<div class="rv"><h2 class="rv-title">Classement</h2><ol class="reveal"></ol><p class="rv-wait">Suspense…</p></div>';
+      }
+      const ol = el.querySelector('ol');
+      let c = +el.dataset.count;
+      while (c < shown) {
+        const p = list[c];
+        ol.querySelectorAll('.fresh').forEach(x => x.classList.remove('fresh'));
+        const li = document.createElement('li');
+        li.className = 'rank-in fresh';
+        li.innerHTML = `<span class="rk">${p.rank}<sup>${p.rank === 1 ? 'er' : 'e'}</sup></span><span class="nm">${this.esc(p.name)}</span>`;
+        ol.prepend(li); // le meilleur finit en haut
+        c++;
+      }
+      el.dataset.count = String(c);
+      const w = el.querySelector('.rv-wait'); if (w) w.style.visibility = shown < n ? 'visible' : 'hidden';
+      return;
+    }
+    if (el.dataset.stage === 'podium') return;
+    el.dataset.stage = 'podium';
+    const top = list.slice().reverse();
+    const pod = [top[1], top[0], top[2]];
+    const cls = ['p2', 'p1', 'p3'];
+    const medal = { 1: '🥇', 2: '🥈', 3: '🥉' };
+    const blocks = pod.map((p, i) => p
+      ? `<div class="pod ${cls[i]}"><div class="pm">${medal[p.rank] || ''}</div><div class="pn">${this.esc(p.name)}</div><div class="ps">${pts(p.score)}</div><div class="pb">${p.rank}</div></div>`
+      : '<div class="pod empty"></div>').join('');
+    const rest = top.slice(3).map(p => `<li><span class="rk">${p.rank}<sup>e</sup></span><span class="nm">${this.esc(p.name)}</span><span class="sc">${pts(p.score)}</span></li>`).join('');
+    el.innerHTML = `<div class="rv"><h2 class="rv-title">🏆 Podium</h2><div class="podium">${blocks}</div>${rest ? `<ol class="others">${rest}</ol>` : ''}</div>`;
   },
 };
