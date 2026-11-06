@@ -7,7 +7,9 @@ const os = require('os');
 
 const PORT = process.env.PORT || 3000;
 // Réglables par le maître du jeu (valeurs par défaut)
-const settings = { answerMs: 13000, cooldownMs: 40000 };
+const settings = { answerMs: 13000, cooldownMs: 40000, mode: 1 }; // mode 1 = une réponse, 2 = titre + artiste
+const PARTS = () => settings.mode === 2 ? ['title', 'artist'] : ['one'];
+const LABELS = { one: 'la réponse', title: 'le titre', artist: "l'artiste" };
 const REVEAL_STEP_MS = 3000; // délai entre chaque rang lors du classement
 
 // ---------- État du jeu ----------
@@ -25,7 +27,7 @@ function newGame() {
     frozen: false,           // buzzers bloqués + pause (pénalités et décompte gelés)
     pausedAt: null,
     history: [],             // buzzeurs de l'extrait en cours, dans l'ordre {id,name,wrong}
-    awarded: null,           // nom du joueur qui a eu le point sur cet extrait
+    found: {},               // parties trouvées sur cet extrait : { one|title|artist: nom }
   };
 }
 newGame();
@@ -55,8 +57,9 @@ function publicState(client) {
     frozen: game.frozen,
     pausedAt: game.pausedAt,
     history: game.history,
-    awarded: game.awarded,
-    settings: { answer: settings.answerMs / 1000, cooldown: settings.cooldownMs / 1000 },
+    found: game.found,
+    remaining: PARTS().filter(k => !game.found[k]),
+    settings: { answer: settings.answerMs / 1000, cooldown: settings.cooldownMs / 1000, mode: settings.mode },
     // Les points restent cachés jusqu'à la fin de la partie
     ranking: game.phase === 'ended' ? game.ranking : null,
     you: client.pid && game.players[client.pid] ? { id: client.pid, name: game.players[client.pid].name } : null,
@@ -110,20 +113,36 @@ function unfreeze(now) {
   game.pausedAt = null;
 }
 
-// Donne le point : pas de pénalité pour ce joueur, la vidéo reprend, buzzers fermés
-function award(id, now) {
-  if (game.awarded) return { error: `Point déjà donné à ${game.awarded}` };
+// Donne les points pour les parties trouvées (1 point par partie)
+function award(id, parts, now) {
   const p = game.players[id];
   if (!p) return { error: 'Joueur inconnu' };
-  p.score += 1; p.cooldownUntil = 0;
-  game.awarded = p.name;
-  clearAnswerTimer();
-  game.frozen = false; game.pausedAt = null;
-  game.pending = null;
-  game.buzz = null;
-  game.phase = 'waiting';
-  game.playing = true;
-  sendEvent('verdict', { ok: true });
+  const left = PARTS().filter(k => !game.found[k]);
+  if (!left.length) return { error: 'Tous les points de cet extrait sont déjà donnés' };
+  parts = (parts && parts.length ? parts : left).filter(k => left.includes(k));
+  if (!parts.length) return { error: 'Déjà trouvé' };
+  for (const k of parts) game.found[k] = p.name;
+  p.score += parts.length;
+  const done = PARTS().every(k => game.found[k]);
+  const answering = game.phase === 'answering' && game.buzz;
+  if (done) {
+    // Tout est trouvé : pas de pénalité, vidéo qui continue, buzzers fermés
+    p.cooldownUntil = 0;
+    clearAnswerTimer();
+    game.frozen = false; game.pausedAt = null;
+    game.pending = null; game.buzz = null;
+    game.phase = 'waiting';
+    game.playing = true;
+  } else if (!answering || game.buzz.id === id) {
+    // Une partie reste à trouver : le joueur garde sa pénalité, les autres peuvent buzzer
+    if (game.pending && game.pending.id === id) game.pending = null;
+    clearAnswerTimer();
+    game.frozen = false; game.pausedAt = null;
+    game.buzz = null;
+    game.phase = 'open';
+    game.playing = true;
+  }
+  sendEvent('verdict', { ok: true, partial: !done });
   broadcast();
   return { ok: true };
 }
@@ -170,11 +189,25 @@ function handleAction(a) {
     }
     case 'valid': {
       if (!game.pending) return { error: 'Aucune réponse à valider' };
-      return award(game.pending.id, now);
+      return award(game.pending.id, a.parts, now);
+    }
+    case 'stop': { // fin du décompte sans juger : pénalité gardée, les autres peuvent buzzer
+      if (game.phase !== 'answering') return { error: 'Personne ne répond' };
+      clearAnswerTimer();
+      game.frozen = false; game.pausedAt = null;
+      game.phase = 'open';
+      game.buzz = null;
+      game.playing = true;
+      break;
+    }
+    case 'mode': {
+      const m = Number(a.mode) === 2 ? 2 : 1;
+      if (m !== settings.mode) { settings.mode = m; game.found = {}; }
+      break;
     }
     case 'award': { // valider le point après coup, depuis la liste des buzzeurs
       if (!game.history.some(h => h.id === a.id)) return { error: 'Ce joueur n\'a pas buzzé sur cet extrait' };
-      return award(a.id, now);
+      return award(a.id, a.parts, now);
     }
     case 'settings': {
       const ans = Math.round(Number(a.answer)), cd = Math.round(Number(a.cooldown));
@@ -199,7 +232,7 @@ function handleAction(a) {
       clearAnswerTimer();
       game.frozen = false; game.pausedAt = null;
       for (const p of Object.values(game.players)) p.cooldownUntil = 0;
-      game.history = []; game.awarded = null;
+      game.history = []; game.found = {};
       game.buzz = null;
       game.pending = null;
       game.phase = 'open';
