@@ -65,3 +65,10 @@ input{font:inherit;width:100%;padding:14px;border-radius:12px;border:1px solid v
 @keyframes fok{30%{background:#2fd18b55}}@keyframes fko{30%{background:#ff5a5a55}}
 .hrow{display:flex;align-items:center;gap:8px;background:#0d0b17;border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 12px;margin:5px 0}.hn{flex:1;font-weight:700}.hbtn{padding:8px 12px;font-size:.9rem}
 label input{margin-top:4px}
+.pod .pn+.pn{margin-top:2px}
+.p1 .pb{animation:glow 1.6s ease-in-out 2.2s infinite alternate}
+.p1 .pm{display:inline-block;animation:bounce 1s ease-in-out 2.2s infinite}
+.champ{text-align:center;font-size:clamp(1.4rem,4vw,2.4rem);font-weight:900;margin:6px 0 16px;color:var(--acc2);opacity:0;animation:champ .8s cubic-bezier(.2,.9,.3,1.4) 1.9s forwards;text-shadow:0 0 24px #ffc94d88}
+@keyframes glow{from{box-shadow:inset 0 -10px 30px #0003,0 0 10px #ffc94d55}to{box-shadow:inset 0 -10px 30px #0003,0 0 40px #ffc94dcc}}
+@keyframes bounce{50%{transform:translateY(-10px) scale(1.15)}}
+@keyframes champ{from{transform:scale(.3);opacity:0}to{transform:none;opacity:1}}
