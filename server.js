@@ -6,8 +6,8 @@ const path = require('path');
 const os = require('os');
 
 const PORT = process.env.PORT || 3000;
-const ANSWER_MS = 13000;   // temps pour répondre après un buzz
-const COOLDOWN_MS = 40000; // temps mort du joueur qui a buzzé
+// Réglables par le maître du jeu (valeurs par défaut)
+const settings = { answerMs: 13000, cooldownMs: 40000 };
 const REVEAL_STEP_MS = 3000; // délai entre chaque rang lors du classement
 
 // ---------- État du jeu ----------
@@ -24,6 +24,8 @@ function newGame() {
     ranking: null,
     frozen: false,           // buzzers bloqués + pause (pénalités et décompte gelés)
     pausedAt: null,
+    history: [],             // buzzeurs de l'extrait en cours, dans l'ordre {id,name,wrong}
+    awarded: null,           // nom du joueur qui a eu le point sur cet extrait
   };
 }
 newGame();
@@ -52,6 +54,9 @@ function publicState(client) {
     revealStep: REVEAL_STEP_MS,
     frozen: game.frozen,
     pausedAt: game.pausedAt,
+    history: game.history,
+    awarded: game.awarded,
+    settings: { answer: settings.answerMs / 1000, cooldown: settings.cooldownMs / 1000 },
     // Les points restent cachés jusqu'à la fin de la partie
     ranking: game.phase === 'ended' ? game.ranking : null,
     you: client.pid && game.players[client.pid] ? { id: client.pid, name: game.players[client.pid].name } : null,
@@ -105,6 +110,24 @@ function unfreeze(now) {
   game.pausedAt = null;
 }
 
+// Donne le point : pas de pénalité pour ce joueur, la vidéo reprend, buzzers fermés
+function award(id, now) {
+  if (game.awarded) return { error: `Point déjà donné à ${game.awarded}` };
+  const p = game.players[id];
+  if (!p) return { error: 'Joueur inconnu' };
+  p.score += 1; p.cooldownUntil = 0;
+  game.awarded = p.name;
+  clearAnswerTimer();
+  game.frozen = false; game.pausedAt = null;
+  game.pending = null;
+  game.buzz = null;
+  game.phase = 'waiting';
+  game.playing = true;
+  sendEvent('verdict', { ok: true });
+  broadcast();
+  return { ok: true };
+}
+
 function parseYouTube(url) {
   if (!url) return null;
   url = url.trim();
@@ -137,29 +160,32 @@ function handleAction(a) {
       // Premier arrivé = premier servi : on bascule tout de suite en phase réponse
       game.phase = 'answering';
       game.playing = false;
-      game.buzz = { id: p.id, name: p.name, at: now, until: now + ANSWER_MS };
+      game.buzz = { id: p.id, name: p.name, at: now, until: now + settings.answerMs };
       game.pending = { id: p.id, name: p.name };
-      p.cooldownUntil = now + COOLDOWN_MS;
-      startAnswerTimer(ANSWER_MS);
+      p.cooldownUntil = now + settings.cooldownMs;
+      startAnswerTimer(settings.answerMs);
+      if (!game.history.some(h => h.id === p.id)) game.history.push({ id: p.id, name: p.name, wrong: false });
       sendEvent('buzz', { name: p.name });
       break;
     }
     case 'valid': {
-      // Bonne réponse : +1, pas de pénalité, la vidéo reprend mais les buzzers restent fermés
       if (!game.pending) return { error: 'Aucune réponse à valider' };
-      const p = game.players[game.pending.id];
-      if (p) { p.score += 1; p.cooldownUntil = 0; }
-      clearAnswerTimer();
-      game.frozen = false; game.pausedAt = null;
-      game.pending = null;
-      game.buzz = null;
-      game.phase = 'waiting';
-      game.playing = true;
-      sendEvent('verdict', { ok: true });
+      return award(game.pending.id, now);
+    }
+    case 'award': { // valider le point après coup, depuis la liste des buzzeurs
+      if (!game.history.some(h => h.id === a.id)) return { error: 'Ce joueur n\'a pas buzzé sur cet extrait' };
+      return award(a.id, now);
+    }
+    case 'settings': {
+      const ans = Math.round(Number(a.answer)), cd = Math.round(Number(a.cooldown));
+      if (!(ans >= 3 && ans <= 120)) return { error: 'Temps de réponse : entre 3 et 120 s' };
+      if (!(cd >= 0 && cd <= 300)) return { error: 'Pénalité : entre 0 et 300 s' };
+      settings.answerMs = ans * 1000; settings.cooldownMs = cd * 1000;
       break;
     }
     case 'wrong': {
       if (!game.pending) return { error: 'Aucune réponse à refuser' };
+      { const h = game.history.find(x => x.id === game.pending.id); if (h) h.wrong = true; }
       unfreeze(now);
       clearAnswerTimer();
       game.pending = null;
@@ -173,18 +199,10 @@ function handleAction(a) {
       clearAnswerTimer();
       game.frozen = false; game.pausedAt = null;
       for (const p of Object.values(game.players)) p.cooldownUntil = 0;
+      game.history = []; game.awarded = null;
       game.buzz = null;
       game.pending = null;
       game.phase = 'open';
-      game.playing = true;
-      break;
-    }
-    case 'reveal': { // découvrir la réponse : la vidéo reprend, buzzers fermés
-      clearAnswerTimer();
-      game.frozen = false; game.pausedAt = null;
-      game.buzz = null;
-      game.pending = null;
-      game.phase = 'waiting';
       game.playing = true;
       break;
     }
