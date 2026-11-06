@@ -21,6 +21,171 @@
   <div class="card">
     <b>⚙️ Réglages</b>
     <div class="grid2" style="margin-top:8px">
+      <button id="mode1" data-mode="1">1 réponse</button>
+      <button id="mode2" data-mode="2">2 réponses<br><small>titre + artiste</small></button>
+    </div>
+    <div class="grid2" style="margin-top:8px">
+      <label class="muted" style="font-size:.85rem">Temps de réponse (s)<input id="setAns" type="number" min="3" max="120" inputmode="numeric"></label>
+      <label class="muted" style="font-size:.85rem">Pénalité (s)<input id="setCd" type="number" min="0" max="300" inputmode="numeric"></label>
+    </div>
+    <button id="saveSet" class="full" style="margin-top:8px">Appliquer</button>
+  </div>
+
+  <div class="card">
+    <b>Vidéo YouTube</b>
+    <input id="url" placeholder="Colle le lien YouTube du blind test" style="margin-top:8px">
+    <button id="send" class="b-blue full" style="margin-top:8px">📺 Envoyer sur l'écran</button>
+  </div>
+
+  <div class="card" id="live">
+    <div id="buzzBox"></div>
+    <div id="verdict" style="margin-top:10px"></div>
+    <div id="hist" style="margin-top:10px"></div>
+    <button id="next" class="b-acc full" style="margin-top:10px;font-size:1.2rem">🎶 Nouvel extrait — ouvrir les buzzers</button>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px">
+      <button data-seek="-60">⏪ -60s</button><button data-seek="-15">◀ -15s</button><button data-seek="15">+15s ▶</button><button data-seek="60">+60s ⏩</button>
+    </div>
+    <button id="freeze" class="full" style="margin-top:8px">⏸ Bloquer les buzzers — pause</button>
+  </div>
+
+  <div class="card">
+    <button id="end" class="b-gold full">🏁 Fin de partie — afficher le classement</button>
+    <div class="grid2" style="margin-top:8px">
+      <button id="reset">🔁 Rejouer (mêmes joueurs)</button>
+      <button id="wipe">🗑 Tout effacer</button>
+    </div>
+  </div>
+  <div id="reveal"></div>
+</div>
+<script src="/common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const joinUrl = location.origin + '/joueur';
+$('joinUrl').textContent = joinUrl;
+$('tvUrl').textContent = location.origin + '/ecran';
+try { new QRCode($('qr'), { text: joinUrl, width: 200, height: 200 }); } catch (e) { $('qr').style.display = 'none'; }
+
+const act = async (d) => { const r = await BT.act(d); if (r.error) alert(r.error); };
+$('send').onclick = () => act({ type: 'video', url: $('url').value });
+document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => act({ type: 'mode', mode: +b.dataset.mode }));
+$('verdict').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.v === 'wrong') act({ type: 'wrong' });
+  else if (b.dataset.v === 'stop') act({ type: 'stop' });
+  else act({ type: 'valid', parts: b.dataset.parts ? b.dataset.parts.split(',') : [] });
+};
+let verdictKey = '';
+const PNAME = { one: 'Point', title: 'Titre', artist: 'Artiste' };
+$('next').onclick = () => act({ type: 'next' });
+document.querySelectorAll('[data-seek]').forEach(b => b.onclick = () => act({ type: 'seek', delta: +b.dataset.seek }));
+$('freeze').onclick = () => act({ type: 'freeze' });
+$('saveSet').onclick = async () => {
+  const r = await BT.act({ type: 'settings', answer: $('setAns').value, cooldown: $('setCd').value });
+  if (r.error) alert(r.error); else { $('saveSet').textContent = '✔ Enregistré'; setTimeout(() => $('saveSet').textContent = 'Appliquer', 1500); }
+};
+let setInit = false;
+$('hist').onclick = e => {
+  const b = e.target.closest('[data-award]'); if (!b) return;
+  const what = b.dataset.parts === 'one' ? 'le point' : b.dataset.parts.split(',').map(k => PNAME[k].toLowerCase()).join(' + ');
+  if (confirm(`Donner ${what} à ${b.dataset.name} ?`)) act({ type: 'award', id: b.dataset.award, parts: b.dataset.parts.split(',') });
+};
+let histKey = '';
+$('end').onclick = () => confirm('Terminer la partie et afficher le classement ?') && act({ type: 'end' });
+$('reset').onclick = () => confirm('Remettre les points à zéro et rejouer ?') && act({ type: 'reset' });
+$('wipe').onclick = () => confirm('Effacer joueurs et points ?') && act({ type: 'wipe' });
+
+BT.connect('master', '', render, { buzz: () => BT.beep(990, .2) });
+BT.keepAwake();
+document.addEventListener('click', () => BT.keepAwake(), { once: true });
+
+const LABEL = { lobby: '⏸ En attente des joueurs', waiting: '🔒 Buzzers fermés', open: '🟢 Buzzers ouverts', answering: '🎤 Réponse en cours', ended: '🏁 Partie terminée' };
+function render() {
+  const s = BT.state; if (!s) return;
+  $('phase').textContent = s.frozen ? '⏸ Pause — buzzers bloqués' : (LABEL[s.phase] || s.phase);
+  const fb = $('freeze');
+  fb.textContent = s.frozen ? '▶️ Débloquer les buzzers — lecture' : '⏸ Bloquer les buzzers — pause';
+  fb.className = 'full' + (s.frozen ? ' b-gold' : '');
+  $('lobby').style.display = s.phase === 'lobby' ? 'block' : 'none';
+  $('nb').textContent = s.players.length;
+  $('players').innerHTML = s.players.map(p =>
+    `<span class="pill ${p.connected ? '' : 'off'}">${BT.esc(p.name)} <a href="#" data-k="${p.id}" style="color:var(--ko);text-decoration:none">✕</a></span>`).join('') || '<span class="muted">Personne pour l\'instant</span>';
+  document.querySelectorAll('[data-k]').forEach(a => a.onclick = e => {
+    e.preventDefault(); const p = s.players.find(x => x.id === a.dataset.k);
+    if (confirm(`Retirer ${p ? p.name : 'ce joueur'} ?`)) act({ type: 'kick', id: a.dataset.k });
+  });
+  if (!setInit && s.settings) { $('setAns').value = s.settings.answer; $('setCd').value = s.settings.cooldown; setInit = true; }
+  const mode = (s.settings && s.settings.mode) || 1;
+  $('mode1').className = mode === 1 ? 'b-blue' : '';
+  $('mode2').className = mode === 2 ? 'b-blue' : '';
+  const rem = s.remaining || [];
+  const found = s.found || {};
+  const foundTxt = Object.entries(found).map(([k, n]) => `${mode === 2 ? PNAME[k] + ' : ' : 'Point : '}<b style="color:var(--ok)">${BT.esc(n)}</b>`).join(' · ');
+  const partBtns = (id, name) => {
+    if (!rem.length) return '';
+    const opts = rem.length === 2 ? [['title'], ['artist'], ['title', 'artist']] : [rem];
+    return opts.map(o => `<button class="b-ok hbtn" data-award="${id}" data-name="${BT.esc(name)}" data-parts="${o.join(',')}">✔ ${o.length === 2 ? 'Les 2' : PNAME[o[0]]}</button>`).join('');
+  };
+  const hk = JSON.stringify([s.history, found, rem, s.pending && s.pending.id, mode]);
+  if (hk !== histKey) {
+    histKey = hk;
+    const h = s.history || [];
+    $('hist').innerHTML = (foundTxt ? `<div style="margin-bottom:6px">✅ ${foundTxt}${rem.length ? ` — reste : <b>${rem.map(k => mode === 2 ? PNAME[k].toLowerCase() : 'la réponse').join(', ')}</b>` : ''}</div>` : '') +
+      (!h.length ? '' : `<div class="muted" style="font-size:.85rem;margin-bottom:6px">Buzzeurs de cet extrait (dans l'ordre)</div>` +
+      h.map((x, i) => `<div class="hrow"><span class="hn">${i + 1}. ${BT.esc(x.name)}${x.wrong ? ' <span style="color:var(--ko)">✘</span>' : ''}${Object.values(found).includes(x.name) ? ' <span style="color:var(--ok)">✔</span>' : ''}</span>${partBtns(x.id, x.name)}</div>`).join(''));
+  }
+  const answering = s.phase === 'answering' && s.buzz;
+  const vk = JSON.stringify([!!s.pending, rem, !!answering, mode]);
+  if (vk !== verdictKey) {
+    verdictKey = vk;
+    let html = '';
+    if (s.pending && rem.length) {
+      const ok = rem.length === 2
+        ? '<button class="b-ok" data-parts="title">✔ Titre</button><button class="b-ok" data-parts="artist">✔ Artiste</button><button class="b-ok" data-parts="title,artist" style="grid-column:span 2">✔ Titre + artiste</button>'
+        : `<button class="b-ok" data-parts="${rem[0]}">✔ ${mode === 2 ? PNAME[rem[0]] : 'Bonne réponse'}</button>`;
+      html += `<div class="grid2">${ok}<button class="b-ko" data-v="wrong"${rem.length === 2 ? ' style="grid-column:span 2"' : ''}>✘ Mauvaise</button></div>`;
+    }
+    if (answering) html += '<button class="full" data-v="stop" style="margin-top:8px">⏹ Arrêter le décompte (sans juger)</button>';
+    $('verdict').innerHTML = html;
+  }
+  const box = $('buzzBox');
+  if (s.phase === 'answering' && s.buzz) {
+    const left = Math.max(0, Math.ceil((s.buzz.until - BT.gameNow(s)) / 1000));
+    box.innerHTML = `<div class="answer"><div class="who">${BT.esc(s.buzz.name)}</div><div class="count">${left}</div></div>`;
+  } else if (s.pending) {
+    box.innerHTML = `<div class="answer" style="opacity:.8"><div>Temps écoulé pour</div><div class="who">${BT.esc(s.pending.name)}</div><div>Bonne réponse ?</div></div>`;
+  } else box.innerHTML = '';
+  $('live').style.display = s.phase === 'ended' ? 'none' : 'block';
+  $('reveal').style.display = s.phase === 'ended' ? 'block' : 'none';
+}
+setInterval(() => {
+  render();
+  const s = BT.state;
+  if (s && s.phase === 'ended') BT.renderReveal($('reveal'), s);
+}, 200);
+</script></body></html>
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Maître du jeu</title><link rel="stylesheet" href="/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script></head>
+<body><span id="net" class="net"></span>
+<div class="wrap">
+  <h1>🎩 Maître du jeu</h1>
+  <div class="phase" id="phase"></div>
+
+  <div class="card" id="lobby">
+    <b>1. Faites scanner ce QR code aux joueurs</b>
+    <div id="qr"></div>
+    <p class="muted" style="text-align:center;word-break:break-all" id="joinUrl"></p>
+    <p class="muted" style="font-size:.9rem">📺 Sur la télé / le PC, ouvrez : <b id="tvUrl"></b></p>
+  </div>
+
+  <div class="card">
+    <b>Joueurs (<span id="nb">0</span>)</b>
+    <div id="players" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <b>⚙️ Réglages</b>
+    <div class="grid2" style="margin-top:8px">
       <label class="muted" style="font-size:.85rem">Temps de réponse (s)<input id="setAns" type="number" min="3" max="120" inputmode="numeric"></label>
       <label class="muted" style="font-size:.85rem">Pénalité (s)<input id="setCd" type="number" min="0" max="300" inputmode="numeric"></label>
     </div>
