@@ -276,7 +276,7 @@ function handleAction(a) {
       const sorted = Object.values(game.players).sort((x, y) => y.score - x.score);
       let rank = 0, prev = null;
       const ranked = sorted.map((p, i) => {
-        if (p.score !== prev) { rank = i + 1; prev = p.score; }
+        if (p.score !== prev) { rank++; prev = p.score; } // ex-aequo : même rang, sans sauter de numéro
         return { name: p.name, score: p.score, rank };
       });
       game.ranking = ranked.reverse();
