@@ -19,6 +19,15 @@
   </div>
 
   <div class="card">
+    <b>⚙️ Réglages</b>
+    <div class="grid2" style="margin-top:8px">
+      <label class="muted" style="font-size:.85rem">Temps de réponse (s)<input id="setAns" type="number" min="3" max="120" inputmode="numeric"></label>
+      <label class="muted" style="font-size:.85rem">Pénalité (s)<input id="setCd" type="number" min="0" max="300" inputmode="numeric"></label>
+    </div>
+    <button id="saveSet" class="full" style="margin-top:8px">Appliquer</button>
+  </div>
+
+  <div class="card">
     <b>Vidéo YouTube</b>
     <input id="url" placeholder="Colle le lien YouTube du blind test" style="margin-top:8px">
     <button id="send" class="b-blue full" style="margin-top:8px">📺 Envoyer sur l'écran</button>
@@ -30,6 +39,7 @@
       <button id="valid" class="b-ok">✔ Bonne réponse</button>
       <button id="wrong" class="b-ko">✘ Mauvaise</button>
     </div>
+    <div id="hist" style="margin-top:10px"></div>
     <button id="next" class="b-acc full" style="margin-top:10px;font-size:1.2rem">🎶 Nouvel extrait — ouvrir les buzzers</button>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px">
       <button data-seek="-60">⏪ -60s</button><button data-seek="-15">◀ -15s</button><button data-seek="15">+15s ▶</button><button data-seek="60">+60s ⏩</button>
@@ -61,6 +71,16 @@ $('wrong').onclick = () => act({ type: 'wrong' });
 $('next').onclick = () => act({ type: 'next' });
 document.querySelectorAll('[data-seek]').forEach(b => b.onclick = () => act({ type: 'seek', delta: +b.dataset.seek }));
 $('freeze').onclick = () => act({ type: 'freeze' });
+$('saveSet').onclick = async () => {
+  const r = await BT.act({ type: 'settings', answer: $('setAns').value, cooldown: $('setCd').value });
+  if (r.error) alert(r.error); else { $('saveSet').textContent = '✔ Enregistré'; setTimeout(() => $('saveSet').textContent = 'Appliquer', 1500); }
+};
+let setInit = false;
+$('hist').onclick = e => {
+  const b = e.target.closest('[data-award]'); if (!b) return;
+  if (confirm(`Donner le point à ${b.dataset.name} ?`)) act({ type: 'award', id: b.dataset.award });
+};
+let histKey = '';
 $('end').onclick = () => confirm('Terminer la partie et afficher le classement ?') && act({ type: 'end' });
 $('reset').onclick = () => confirm('Remettre les points à zéro et rejouer ?') && act({ type: 'reset' });
 $('wipe').onclick = () => confirm('Effacer joueurs et points ?') && act({ type: 'wipe' });
@@ -84,6 +104,16 @@ function render() {
     e.preventDefault(); const p = s.players.find(x => x.id === a.dataset.k);
     if (confirm(`Retirer ${p ? p.name : 'ce joueur'} ?`)) act({ type: 'kick', id: a.dataset.k });
   });
+  if (!setInit && s.settings) { $('setAns').value = s.settings.answer; $('setCd').value = s.settings.cooldown; setInit = true; }
+  const hk = JSON.stringify([s.history, s.awarded, s.pending && s.pending.id]);
+  if (hk !== histKey) {
+    histKey = hk;
+    const h = s.history || [];
+    $('hist').innerHTML = !h.length ? '' :
+      `<div class="muted" style="font-size:.85rem;margin-bottom:6px">Buzzeurs de cet extrait (dans l'ordre)${s.awarded ? ` — point donné à <b style="color:var(--ok)">${BT.esc(s.awarded)}</b>` : ''}</div>` +
+      h.map((x, i) => `<div class="hrow"><span class="hn">${i + 1}. ${BT.esc(x.name)}${x.wrong ? ' <span style="color:var(--ko)">✘</span>' : ''}${s.awarded === x.name ? ' <span style="color:var(--ok)">✔</span>' : ''}</span>` +
+        (s.awarded ? '' : `<button class="b-ok hbtn" data-award="${x.id}" data-name="${BT.esc(x.name)}">✔ Point</button>`) + '</div>').join('');
+  }
   const box = $('buzzBox');
   if (s.phase === 'answering' && s.buzz) {
     const left = Math.max(0, Math.ceil((s.buzz.until - BT.gameNow(s)) / 1000));
