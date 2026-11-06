@@ -63,3 +63,5 @@ input{font:inherit;width:100%;padding:14px;border-radius:12px;border:1px solid v
 @keyframes blink{50%{opacity:.25}}
 .flash-ok{animation:fok .8s}.flash-ko{animation:fko .8s}
 @keyframes fok{30%{background:#2fd18b55}}@keyframes fko{30%{background:#ff5a5a55}}
+.hrow{display:flex;align-items:center;gap:8px;background:#0d0b17;border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 12px;margin:5px 0}.hn{flex:1;font-weight:700}.hbtn{padding:8px 12px;font-size:.9rem}
+label input{margin-top:4px}
