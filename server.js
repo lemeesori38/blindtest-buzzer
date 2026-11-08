@@ -7,7 +7,9 @@ const os = require('os');
 
 const PORT = process.env.PORT || 3000;
 // Réglables par le maître du jeu (valeurs par défaut)
-const settings = { answerMs: 13000, cooldownMs: 40000, mode: 1 }; // mode 1 = une réponse, 2 = titre + artiste
+const settings = { answerMs: 13000, cooldownMs: 40000, mode: 1, teams: 0, assign: 'master', teamNames: ['Rouge', 'Bleue', 'Verte', 'Jaune'] };
+// teams : 0 = chacun pour soi, 2 à 4 = nombre d'équipes ; assign : master | choose | random
+const TEAM_COLORS = ['#ff4d5e', '#4d9dff', '#2fd18b', '#ffc94d']; // mode 1 = une réponse, 2 = titre + artiste
 const PARTS = () => settings.mode === 2 ? ['title', 'artist'] : ['one'];
 const LABELS = { one: 'la réponse', title: 'le titre', artist: "l'artiste" };
 const REVEAL_STEP_MS = 3000; // délai entre chaque rang lors du classement
@@ -28,6 +30,9 @@ function newGame() {
     pausedAt: null,
     history: [],             // buzzeurs de l'extrait en cours, dans l'ordre {id,name,wrong}
     found: {},               // parties trouvées sur cet extrait : { one|title|artist: nom }
+    teamScores: [0, 0, 0, 0],
+    teamRanking: null,
+    mvp: null,
   };
 }
 newGame();
@@ -43,6 +48,7 @@ function publicState(client) {
     name: p.name,
     connected: [...clients].some(c => c.pid === p.id),
     cooldownUntil: p.cooldownUntil,
+    team: p.team,
   }));
   return {
     serverNow: now,
@@ -59,7 +65,10 @@ function publicState(client) {
     history: game.history,
     found: game.found,
     remaining: PARTS().filter(k => !game.found[k]),
-    settings: { answer: settings.answerMs / 1000, cooldown: settings.cooldownMs / 1000, mode: settings.mode },
+    settings: { answer: settings.answerMs / 1000, cooldown: settings.cooldownMs / 1000, mode: settings.mode, teams: settings.teams, assign: settings.assign },
+    teams: teamList(),
+    teamRanking: game.phase === 'ended' ? game.teamRanking : null,
+    mvp: game.phase === 'ended' ? game.mvp : null,
     // Les points restent cachés jusqu'à la fin de la partie
     ranking: game.phase === 'ended' ? game.ranking : null,
     you: client.pid && game.players[client.pid] ? { id: client.pid, name: game.players[client.pid].name } : null,
@@ -81,6 +90,29 @@ function sendEvent(name, data) {
 setInterval(() => {
   for (const c of clients) { try { c.res.write(': ping\n\n'); } catch (e) {} }
 }, 15000);
+
+// ---------- Équipes ----------
+function teamList() {
+  return Array.from({ length: settings.teams }, (_, i) => ({ id: i, name: settings.teamNames[i], color: TEAM_COLORS[i] }));
+}
+const inTeams = () => settings.teams > 0;
+// Joueurs concernés par une pénalité : le joueur seul, ou toute son équipe
+function mates(p) {
+  if (!inTeams() || p.team == null) return [p];
+  return Object.values(game.players).filter(x => x.team === p.team);
+}
+function smallestTeam() {
+  const n = Array(settings.teams).fill(0);
+  for (const p of Object.values(game.players)) if (p.team != null && p.team < settings.teams) n[p.team]++;
+  const min = Math.min(...n);
+  const c = n.map((v, i) => v === min ? i : -1).filter(i => i >= 0);
+  return c[Math.floor(Math.random() * c.length)];
+}
+function shuffleTeams() {
+  const ps = Object.values(game.players);
+  for (let i = ps.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ps[i], ps[j]] = [ps[j], ps[i]]; }
+  ps.forEach((p, i) => { p.team = i % settings.teams; });
+}
 
 // ---------- Logique ----------
 function clearAnswerTimer() { if (answerTimer) { clearTimeout(answerTimer); answerTimer = null; } }
@@ -123,11 +155,12 @@ function award(id, parts, now) {
   if (!parts.length) return { error: 'Déjà trouvé' };
   for (const k of parts) game.found[k] = p.name;
   p.score += parts.length;
+  if (inTeams() && p.team != null) game.teamScores[p.team] += parts.length;
   const done = PARTS().every(k => game.found[k]);
   const answering = game.phase === 'answering' && game.buzz;
   if (done) {
     // Tout est trouvé : pas de pénalité, vidéo qui continue, buzzers fermés
-    p.cooldownUntil = 0;
+    for (const m of mates(p)) m.cooldownUntil = 0;
     clearAnswerTimer();
     game.frozen = false; game.pausedAt = null;
     game.pending = null; game.buzz = null;
@@ -167,7 +200,10 @@ function handleAction(a) {
       if (!name || !a.pid) return { error: 'Pseudo manquant' };
       const p = game.players[a.pid];
       if (p) p.name = name;
-      else game.players[a.pid] = { id: a.pid, name, score: 0, cooldownUntil: 0 };
+      else {
+        game.players[a.pid] = { id: a.pid, name, score: 0, cooldownUntil: 0, team: null };
+        if (inTeams() && settings.assign === 'random') game.players[a.pid].team = smallestTeam();
+      }
       break;
     }
     case 'buzz': {
@@ -176,14 +212,15 @@ function handleAction(a) {
       if (game.frozen) return { error: 'Buzzers bloqués' };
       if (game.phase !== 'open') return { error: 'Buzzers fermés' };
       if (now < p.cooldownUntil) return { error: 'Temps mort' };
+      if (inTeams() && p.team == null) return { error: 'Tu n\'as pas encore d\'équipe' };
       // Premier arrivé = premier servi : on bascule tout de suite en phase réponse
       game.phase = 'answering';
       game.playing = false;
-      game.buzz = { id: p.id, name: p.name, at: now, until: now + settings.answerMs };
+      game.buzz = { id: p.id, name: p.name, team: inTeams() ? p.team : null, at: now, until: now + settings.answerMs };
       game.pending = { id: p.id, name: p.name };
-      p.cooldownUntil = now + settings.cooldownMs;
+      for (const m of mates(p)) m.cooldownUntil = now + settings.cooldownMs; // pénalité pour toute l'équipe
       startAnswerTimer(settings.answerMs);
-      if (!game.history.some(h => h.id === p.id)) game.history.push({ id: p.id, name: p.name, wrong: false });
+      if (!game.history.some(h => h.id === p.id)) game.history.push({ id: p.id, name: p.name, team: inTeams() ? p.team : null, wrong: false });
       sendEvent('buzz', { name: p.name });
       break;
     }
@@ -198,6 +235,32 @@ function handleAction(a) {
       game.phase = 'open';
       game.buzz = null;
       game.playing = true;
+      break;
+    }
+    case 'teams': { // chacun pour soi (0) ou 2 à 4 équipes + mode de constitution
+      const n = Number(a.count);
+      const count = [0, 2, 3, 4].includes(n) ? n : settings.teams;
+      const assign = ['master', 'choose', 'random'].includes(a.assign) ? a.assign : settings.assign;
+      const changed = count !== settings.teams || assign !== settings.assign;
+      settings.teams = count; settings.assign = assign;
+      for (const p of Object.values(game.players)) if (p.team != null && p.team >= count) p.team = null;
+      if (changed && count && assign === 'random') shuffleTeams();
+      break;
+    }
+    case 'shuffle': if (!inTeams()) return { error: 'Pas d\'équipes' }; shuffleTeams(); break;
+    case 'setTeam': { // le maître place un joueur, ou un joueur choisit son équipe
+      const p = game.players[a.id || a.pid];
+      if (!p) return { error: 'Joueur inconnu' };
+      if (!a.master && settings.assign !== 'choose') return { error: 'C\'est le maître du jeu qui fait les équipes' };
+      const t = a.team === null || a.team === '' ? null : Number(a.team);
+      if (t !== null && !(t >= 0 && t < settings.teams)) return { error: 'Équipe inconnue' };
+      p.team = t; // les points déjà gagnés restent à l'ancienne équipe
+      break;
+    }
+    case 'teamName': {
+      const t = Number(a.team), name = String(a.name || '').trim().slice(0, 16);
+      if (!(t >= 0 && t < 4) || !name) return { error: 'Nom invalide' };
+      settings.teamNames[t] = name;
       break;
     }
     case 'mode': {
@@ -280,6 +343,15 @@ function handleAction(a) {
         return { name: p.name, score: p.score, rank };
       });
       game.ranking = ranked.reverse();
+      if (inTeams()) {
+        const ts = teamList().map(t => ({ ...t, score: game.teamScores[t.id], members: Object.values(game.players).filter(p => p.team === t.id).map(p => p.name) }))
+          .sort((x, y) => y.score - x.score);
+        let r = 0, pv = null;
+        ts.forEach(t => { if (t.score !== pv) { r++; pv = t.score; } t.rank = r; });
+        game.teamRanking = ts.reverse();
+        const best = Math.max(0, ...Object.values(game.players).map(p => p.score));
+        game.mvp = best > 0 ? { score: best, names: Object.values(game.players).filter(p => p.score === best).map(p => p.name) } : null;
+      } else { game.teamRanking = null; game.mvp = null; }
       game.revealStart = now + 1500;
       break;
     }
