@@ -19,6 +19,21 @@
   </div>
 
   <div class="card">
+    <b>👥 Équipes</b>
+    <div class="seg" style="grid-template-columns:repeat(4,1fr)">
+      <button data-tc="0">Solo</button><button data-tc="2">2</button><button data-tc="3">3</button><button data-tc="4">4</button>
+    </div>
+    <div id="tOpts" style="display:none">
+      <div class="muted" style="font-size:.85rem;margin-top:10px">Qui fait les équipes ?</div>
+      <div class="seg" style="grid-template-columns:repeat(3,1fr)">
+        <button data-ta="master">Le maître</button><button data-ta="choose">Les joueurs</button><button data-ta="random">Aléatoire</button>
+      </div>
+      <button id="shuffle" class="full" style="margin-top:8px">🎲 Mélanger les équipes</button>
+      <div id="tNames" class="grid2" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <div class="card">
     <b>⚙️ Réglages</b>
     <div class="grid2" style="margin-top:8px">
       <button id="mode1" data-mode="1">1 réponse</button>
@@ -65,6 +80,13 @@ $('joinUrl').textContent = joinUrl;
 $('tvUrl').textContent = location.origin + '/ecran';
 try { new QRCode($('qr'), { text: joinUrl, width: 200, height: 200 }); } catch (e) { $('qr').style.display = 'none'; }
 
+document.querySelectorAll('[data-tc]').forEach(b => b.onclick = () => act({ type: 'teams', count: +b.dataset.tc }));
+document.querySelectorAll('[data-ta]').forEach(b => b.onclick = () => act({ type: 'teams', assign: b.dataset.ta }));
+const actC = async (d) => { const r = await BT.act(d); if (r.error) alert(r.error); };
+document.getElementById('shuffle').onclick = () => confirm('Refaire les équipes au hasard ?') && actC({ type: 'shuffle' });
+document.getElementById('tNames').addEventListener('change', e => { const i = e.target.closest('[data-tn]'); if (i) actC({ type: 'teamName', team: +i.dataset.tn, name: i.value }); });
+document.getElementById('players').addEventListener('change', e => { const sel = e.target.closest('[data-mv]'); if (sel) actC({ type: 'setTeam', id: sel.dataset.mv, team: sel.value === '' ? null : +sel.value, master: true }); });
+let plKey = '', tnKey = '';
 const act = async (d) => { const r = await BT.act(d); if (r.error) alert(r.error); };
 $('send').onclick = () => act({ type: 'video', url: $('url').value });
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => act({ type: 'mode', mode: +b.dataset.mode }));
@@ -107,8 +129,29 @@ function render() {
   fb.className = 'full' + (s.frozen ? ' b-gold' : '');
   $('lobby').style.display = s.phase === 'lobby' ? 'block' : 'none';
   $('nb').textContent = s.players.length;
-  $('players').innerHTML = s.players.map(p =>
-    `<span class="pill ${p.connected ? '' : 'off'}">${BT.esc(p.name)} <a href="#" data-k="${p.id}" style="color:var(--ko);text-decoration:none">✕</a></span>`).join('') || '<span class="muted">Personne pour l\'instant</span>';
+  const teams = s.teams || [];
+  const pk = JSON.stringify([s.players.map(p => [p.id, p.name, p.connected, p.team]), teams]);
+  if (pk !== plKey) {
+    plKey = pk;
+    const pill = p => `<span class="pill ${p.connected ? '' : 'off'}">${BT.esc(p.name)}` +
+      (teams.length ? ` <select data-mv="${p.id}" style="width:auto;padding:2px;font-size:.8rem;border-radius:6px;background:#0d0b17;color:var(--txt)"><option value="">—</option>${teams.map(t => `<option value="${t.id}" ${p.team === t.id ? 'selected' : ''}>${BT.esc(t.name)}</option>`).join('')}</select>` : '') +
+      ` <a href="#" data-k="${p.id}" style="color:var(--ko);text-decoration:none">✕</a></span>`;
+    if (!s.players.length) $('players').innerHTML = '<span class="muted">Personne pour l\'instant</span>';
+    else if (!teams.length) $('players').innerHTML = s.players.map(pill).join('');
+    else {
+      const groups = teams.map(t => `<div class="tgroup" style="border-color:${t.color}"><div class="tt" style="color:${t.color}">${BT.esc(t.name)}</div>${s.players.filter(p => p.team === t.id).map(pill).join('') || '<span class="muted" style="font-size:.85rem">vide</span>'}</div>`);
+      const none = s.players.filter(p => p.team == null);
+      $('players').innerHTML = groups.join('') + (none.length ? `<div class="tgroup" style="border-color:#666"><div class="tt muted">Sans équipe</div>${none.map(pill).join('')}</div>` : '');
+    }
+  }
+  document.querySelectorAll('[data-tc]').forEach(b => b.classList.toggle('on', +b.dataset.tc === (s.settings.teams || 0)));
+  document.querySelectorAll('[data-ta]').forEach(b => b.classList.toggle('on', b.dataset.ta === s.settings.assign));
+  $('tOpts').style.display = teams.length ? 'block' : 'none';
+  const tk = JSON.stringify(teams);
+  if (tk !== tnKey && !(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.tn)) {
+    tnKey = tk;
+    $('tNames').innerHTML = teams.map(t => `<input data-tn="${t.id}" value="${BT.esc(t.name)}" maxlength="16" style="border-left:6px solid ${t.color};padding:10px">`).join('');
+  }
   document.querySelectorAll('[data-k]').forEach(a => a.onclick = e => {
     e.preventDefault(); const p = s.players.find(x => x.id === a.dataset.k);
     if (confirm(`Retirer ${p ? p.name : 'ce joueur'} ?`)) act({ type: 'kick', id: a.dataset.k });
@@ -131,7 +174,7 @@ function render() {
     const h = s.history || [];
     $('hist').innerHTML = (foundTxt ? `<div style="margin-bottom:6px">✅ ${foundTxt}${rem.length ? ` — reste : <b>${rem.map(k => mode === 2 ? PNAME[k].toLowerCase() : 'la réponse').join(', ')}</b>` : ''}</div>` : '') +
       (!h.length ? '' : `<div class="muted" style="font-size:.85rem;margin-bottom:6px">Buzzeurs de cet extrait (dans l'ordre)</div>` +
-      h.map((x, i) => `<div class="hrow"><span class="hn">${i + 1}. ${BT.esc(x.name)}${x.wrong ? ' <span style="color:var(--ko)">✘</span>' : ''}${Object.values(found).includes(x.name) ? ' <span style="color:var(--ok)">✔</span>' : ''}</span>${partBtns(x.id, x.name)}</div>`).join(''));
+      h.map((x, i) => `<div class="hrow"><span class="hn">${i + 1}. ${BT.teamTag(s, x.team)}${BT.esc(x.name)}${x.wrong ? ' <span style="color:var(--ko)">✘</span>' : ''}${Object.values(found).includes(x.name) ? ' <span style="color:var(--ok)">✔</span>' : ''}</span>${partBtns(x.id, x.name)}</div>`).join(''));
   }
   const answering = s.phase === 'answering' && s.buzz;
   const vk = JSON.stringify([!!s.pending, rem, !!answering, mode]);
@@ -150,7 +193,8 @@ function render() {
   const box = $('buzzBox');
   if (s.phase === 'answering' && s.buzz) {
     const left = Math.max(0, Math.ceil((s.buzz.until - BT.gameNow(s)) / 1000));
-    box.innerHTML = `<div class="answer"><div class="who">${BT.esc(s.buzz.name)}</div><div class="count">${left}</div></div>`;
+    const bt = BT.teamOf(s, s.buzz.team);
+    box.innerHTML = `<div class="answer"${bt ? ` style="background:${bt.color}"` : ''}>${bt ? `<div><b>Équipe ${BT.esc(bt.name)}</b></div>` : ''}<div class="who">${BT.esc(s.buzz.name)}</div><div class="count">${left}</div></div>`;
   } else if (s.pending) {
     box.innerHTML = `<div class="answer" style="opacity:.8"><div>Temps écoulé pour</div><div class="who">${BT.esc(s.pending.name)}</div><div>Bonne réponse ?</div></div>`;
   } else box.innerHTML = '';
