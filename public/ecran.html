@@ -11,6 +11,7 @@
       <button class="b-acc" id="startBtn" style="font-size:1.4rem">Activer l'écran</button>
     </div>
     <div class="overlay" id="answer">
+      <div class="tname" id="tname" style="display:none"></div>
       <div class="muted" style="font-size:2rem">🎤 C'est à</div>
       <div class="who" id="who"></div>
       <div class="count" id="count"></div>
@@ -87,14 +88,23 @@ function render() {
   $('freeze').className = 'full' + (s.frozen ? ' b-gold' : '');
   $('freeze').style.display = s.phase === 'ended' ? 'none' : '';
   const gnow = BT.gameNow(s);
-  $('players').innerHTML = s.players.map(p => {
-    const cd = Math.ceil((p.cooldownUntil - gnow) / 1000);
-    return `<span class="pill ${p.connected ? '' : 'off'}">${BT.esc(p.name)}${cd > 0 && s.phase !== 'lobby' ? ` ⏳${cd}s` : ''}</span>`;
-  }).join('') || '<span class="muted">Personne pour l\'instant</span>';
+  const pill = p => { const cd = Math.ceil((p.cooldownUntil - gnow) / 1000);
+    return `<span class="pill ${p.connected ? '' : 'off'}">${BT.esc(p.name)}${cd > 0 && s.phase !== 'lobby' ? ` ⏳${cd}s` : ''}</span>`; };
+  const teams = s.teams || [];
+  if (!s.players.length) $('players').innerHTML = '<span class="muted">Personne pour l\'instant</span>';
+  else if (!teams.length) $('players').innerHTML = s.players.map(pill).join('');
+  else {
+    const none = s.players.filter(p => p.team == null);
+    $('players').innerHTML = teams.map(t => `<div class="tgroup" style="border-color:${t.color}"><div class="tt" style="color:${t.color}">${BT.esc(t.name)}</div>${s.players.filter(p => p.team === t.id).map(pill).join('') || '<span class="muted" style="font-size:.85rem">vide</span>'}</div>`).join('')
+      + (none.length ? `<div class="tgroup" style="border-color:#666"><div class="tt muted">Sans équipe</div>${none.map(pill).join('')}</div>` : '');
+  }
   const ans = s.phase === 'answering' && s.buzz;
   $('answer').classList.toggle('on', !!ans);
   if (ans) {
     $('who').textContent = s.buzz.name;
+    const bt = BT.teamOf(s, s.buzz.team);
+    $('tname').style.display = bt ? '' : 'none';
+    if (bt) { $('tname').textContent = 'Équipe ' + bt.name; $('tname').style.background = bt.color; }
     $('count').textContent = s.frozen ? '⏸' : Math.max(0, Math.ceil((s.buzz.until - gnow) / 1000));
   }
   const mode = (s.settings && s.settings.mode) || 1;
