@@ -55,8 +55,12 @@ const BT = {
   esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
   // Classement révélé un par un, puis podium (synchronisé sur tous les écrans).
   // Le DOM n'est modifié qu'au changement d'étape, pour que les animations ne rejouent pas.
+  teamOf(s, t) { return t == null || !s.teams ? null : s.teams[t] || null; },
+  teamTag(s, t) { const x = this.teamOf(s, t); return x ? `<span class="tdot" style="background:${x.color}"></span>` : ''; },
   renderReveal(el, s) {
-    const list = s.ranking || [];
+    const teamMode = !!s.teamRanking;
+    const list = s.teamRanking || s.ranking || [];
+    const dot = p => p.color ? `<span class="tdot" style="background:${p.color}"></span>` : '';
     const n = list.length;
     const shown = Math.max(0, Math.floor((this.now() - s.revealStart) / s.revealStep) + 1);
     const pts = x => `${x} pt${x > 1 ? 's' : ''}`;
@@ -81,7 +85,7 @@ const BT = {
         ol.querySelectorAll('.fresh').forEach(x => x.classList.remove('fresh'));
         const li = document.createElement('li');
         li.className = 'rank-in fresh';
-        li.innerHTML = `<span class="rk">${p.rank}<sup>${p.rank === 1 ? 'er' : 'e'}</sup></span><span class="nm">${this.esc(p.name)}</span>`;
+        li.innerHTML = `<span class="rk">${p.rank}<sup>${p.rank === 1 ? 'er' : 'e'}</sup></span><span class="nm">${dot(p)}${teamMode ? 'Équipe ' : ''}${this.esc(p.name)}</span>`;
         ol.prepend(li); // le meilleur finit en haut
         c++;
       }
@@ -102,11 +106,11 @@ const BT = {
     const cls = ['p2', 'p1', 'p3'];
     const medal = ['🥈', '🥇', '🥉'];
     const blocks = steps.map((g, i) => g
-      ? `<div class="pod ${cls[i]}"><div class="pm">${medal[i]}</div>${g.players.map(p => `<div class="pn">${this.esc(p.name)}</div>`).join('')}<div class="ps">${pts(g.score)}</div><div class="pb">${g.rank}</div></div>`
+      ? `<div class="pod ${cls[i]}"><div class="pm">${medal[i]}</div>${g.players.map(p => `<div class="pn">${dot(p)}${this.esc(p.name)}</div>${teamMode && p.members.length ? `<div class="pmem">${p.members.map(m => this.esc(m)).join(', ')}</div>` : ''}`).join('')}<div class="ps">${pts(g.score)}</div><div class="pb">${g.rank}</div></div>`
       : '<div class="pod empty"></div>').join('');
-    const rest = groups.slice(3).flatMap(g => g.players).map(p => `<li><span class="rk">${p.rank}<sup>e</sup></span><span class="nm">${this.esc(p.name)}</span><span class="sc">${pts(p.score)}</span></li>`).join('');
+    const rest = groups.slice(3).flatMap(g => g.players).map(p => `<li><span class="rk">${p.rank}<sup>e</sup></span><span class="nm">${dot(p)}${this.esc(p.name)}</span><span class="sc">${pts(p.score)}</span></li>`).join('');
     const winners = groups[0].players.map(p => this.esc(p.name)).join(' & ');
-    el.innerHTML = `<div class="rv"><h2 class="rv-title">🏆 Podium</h2><div class="podium">${blocks}</div><div class="champ">Bravo ${winners} !</div>${rest ? `<ol class="others">${rest}</ol>` : ''}</div>`;
+    el.innerHTML = `<div class="rv"><h2 class="rv-title">🏆 Podium</h2><div class="podium">${blocks}</div><div class="champ">Bravo ${teamMode ? (groups[0].players.length > 1 ? 'aux équipes ' : 'à l\'équipe ') : ''}${winners} !</div>${teamMode && s.mvp ? `<div class="mvp">⭐ Meilleur joueur : <b>${s.mvp.names.map(n => this.esc(n)).join(' & ')}</b> (${pts(s.mvp.score)})</div>` : ''}${rest ? `<ol class="others">${rest}</ol>` : ''}</div>`;
     setTimeout(() => this.confetti(), 1300);
   },
   // Pluie de confettis + feux d'artifice (canvas plein écran, ~9 s)
